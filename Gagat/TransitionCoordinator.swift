@@ -214,8 +214,8 @@ class TransitionCoordinator: NSObject {
 		
 		// We support both completing the transition and cancelling the transition.
 		// The transition to the new style should be completed if the user is panning
-		// downwards or if they've panned enough that more than half of the new view
-		// is already shown.
+		// towards completion or if they've panned enough that more than half of the 
+        // new view is already shown.
 		let shouldCompleteTransition = isMovingToCompletion || hasPassedThreshold
 		
 		if shouldCompleteTransition {
@@ -259,7 +259,7 @@ class TransitionCoordinator: NSObject {
 		// the targetView and then remove the snapshot. The further down the mask layer is,
 		// the more of the underlying view is visible. When the mask layer reaches the
 		// bottom of the targetView, the entire underlying view will be visible so removing
-		// the snapshot will have no visual effect.
+		// the snapshot will have no visual effect. When panning up, the effect is reversed.
         let targetLocation: CGPoint
         switch direction {
         case .up:

@@ -244,10 +244,18 @@ class TransitionCoordinator: NSObject {
 	}
 	
 	private func cleanupAfterInteractiveStyleTransition() {
-		self.previousStyleTargetViewSnapshot?.removeFromSuperview()
-		self.previousStyleTargetViewSnapshot = nil
-		self.snapshotMaskLayer = nil
+        delay(0.01) {
+            self.previousStyleTargetViewSnapshot?.removeFromSuperview()
+            self.previousStyleTargetViewSnapshot = nil
+            self.snapshotMaskLayer = nil
+        }
 	}
+    
+    private func delay(_ delay: Double, _ closure: @escaping () -> ()) {
+        let time = DispatchTime.now() + Double(Int64(delay * Double(NSEC_PER_SEC))) / Double(NSEC_PER_SEC)
+        DispatchQueue.main.asyncAfter(deadline: time, execute: closure)
+    }
+
 }
 
 extension TransitionCoordinator: UIGestureRecognizerDelegate {

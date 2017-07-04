@@ -125,26 +125,16 @@ class TransitionCoordinator: NSObject {
 		CATransaction.setDisableActions(true)
 		
 		let verticalTranslation = panRecognizer.translation(in: targetView).y
-		if direction == .down && verticalTranslation < 0.0 {
+		if direction == .down && verticalTranslation < 0.0 || direction == .up && verticalTranslation > 0.0 {
 			// We want to prevent the user from moving the mask layer out the
-			// top of the targetView, since doing so would show the new style at
-			// the bottom of the targetView instead.
+			// frame of the targetView, since doing so would show the new style at
+			// the opposite side of the targetView instead.
 			//
 			// By resetting the translation we make sure there's no visual
-			// delay between when the user tries to pan upwards and when they
-			// start panning downwards again.
+			// delay between when the user tries to pan out of frame and when they
+			// start panning within frame again.
 			panRecognizer.setTranslation(.zero, in: targetView)
 			snapshotMaskLayer?.frame.origin.y = 0.0
-        } else if direction == .up && verticalTranslation > 0.0 {
-            // We want to prevent the user from moving the mask layer out the
-            // bottom of the targetView, since doing so would show the new style at
-            // the top of the targetView instead.
-            //
-            // By resetting the translation we make sure there's no visual
-            // delay between when the user tries to pan downwards and when they
-            // start panning upwards again.
-            panRecognizer.setTranslation(.zero, in: targetView)
-            snapshotMaskLayer?.frame.origin.y = targetView.frame.height
         } else {
 			// Simply move the mask layer as much as the user has panned.
 			// Note that if we had used the _location_ of the pan recognizer
@@ -165,7 +155,7 @@ class TransitionCoordinator: NSObject {
 		// Top-left corner...
 		maskingPath.move(to: .zero)
 		
-		// ...arc to top-right corner...
+		// ...to top-right corner...
 		// This is all the code that is required to get the bouncy effect.
 		// Since the control point of the quad curve depends on the velocity
 		// of the pan recognizer, the path will "deform" more for a larger
@@ -179,13 +169,24 @@ class TransitionCoordinator: NSObject {
 		let damping = configuration.jellyFactor > 0.0 ? CGFloat(45.0 / configuration.jellyFactor) : 0.0
 		let verticalOffset = damping > 0.0 ? panRecognizer.velocity(in: targetView).y / damping : 0.0
 		let horizontalTouchLocation = panRecognizer.location(in: targetView).x
-		maskingPath.addQuadCurve(to: CGPoint(x: targetView.bounds.maxX, y: 0.0), controlPoint: CGPoint(x: horizontalTouchLocation, y: verticalOffset))
+        
+        let topRight = CGPoint(x: targetView.bounds.maxX, y: 0.0)
+        if direction == .up {
+            maskingPath.addLine(to: topRight)
+        } else {
+            maskingPath.addQuadCurve(to: topRight, controlPoint: CGPoint(x: horizontalTouchLocation, y: verticalOffset))
+        }
 		
 		// ...to bottom-right corner...
 		maskingPath.addLine(to: CGPoint(x: targetView.bounds.maxX, y: targetView.bounds.maxY))
 		
 		// ...to bottom-left corner...
-		maskingPath.addLine(to: CGPoint(x: 0.0, y: targetView.bounds.maxY))
+        let bottomLeft = CGPoint(x: 0.0, y: targetView.bounds.maxY)
+        if direction == .up {
+            maskingPath.addQuadCurve(to: bottomLeft, controlPoint: CGPoint(x: horizontalTouchLocation, y: targetView.bounds.maxY + verticalOffset))
+        } else {
+            maskingPath.addLine(to: bottomLeft)
+        }
 		
 		// ...and close the path.
 		maskingPath.close()

@@ -27,6 +27,7 @@ class TransitionCoordinator: NSObject {
 	private(set) var panGestureRecognizer: PessimisticPanGestureRecognizer!
 
 	fileprivate var state = State.idle
+    fileprivate var direction = UIPanGestureRecognizer.Direction.down
 	
 	init(targetView: UIView, styleableObject: GagatStyleable, configuration: Gagat.Configuration) {
 		self.targetView = targetView
@@ -57,6 +58,7 @@ class TransitionCoordinator: NSObject {
 	@objc func panRecognizerDidChange(_ panRecognizer: PessimisticPanGestureRecognizer) {
 		switch panRecognizer.state {
 		case .began:
+            direction = panRecognizer.direction
 			beginInteractiveStyleTransition(withPanRecognizer: panRecognizer)
 		case .changed:
 			adjustMaskLayer(basedOn: panRecognizer)
@@ -127,17 +129,17 @@ class TransitionCoordinator: NSObject {
 		CATransaction.setDisableActions(true)
 		
 		let verticalTranslation = panRecognizer.translation(in: targetView).y
-		if verticalTranslation < 0.0 {
-			// We wan't to prevent the user from moving the mask layer out the
-			// top of the targetView, since doing so would show the new style at
-			// the bottom of the targetView instead.
+		if direction == .down && verticalTranslation < 0.0 || direction == .up && verticalTranslation > 0.0 {
+			// We want to prevent the user from moving the mask layer out the
+			// frame of the targetView, since doing so would show the new style at
+			// the opposite side of the targetView instead.
 			//
 			// By resetting the translation we make sure there's no visual
-			// delay between when the user tries to pan upwards and when they
-			// start panning downwards again.
+			// delay between when the user tries to pan out of frame and when they
+			// start panning within frame again.
 			panRecognizer.setTranslation(.zero, in: targetView)
 			snapshotMaskLayer?.frame.origin.y = 0.0
-		} else {
+        } else {
 			// Simply move the mask layer as much as the user has panned.
 			// Note that if we had used the _location_ of the pan recognizer
 			// instead of the _translation_, the top of the mask layer would
@@ -157,7 +159,7 @@ class TransitionCoordinator: NSObject {
 		// Top-left corner...
 		maskingPath.move(to: .zero)
 		
-		// ...arc to top-right corner...
+		// ...to top-right corner...
 		// This is all the code that is required to get the bouncy effect.
 		// Since the control point of the quad curve depends on the velocity
 		// of the pan recognizer, the path will "deform" more for a larger
@@ -171,13 +173,24 @@ class TransitionCoordinator: NSObject {
 		let damping = configuration.jellyFactor > 0.0 ? CGFloat(45.0 / configuration.jellyFactor) : 0.0
 		let verticalOffset = damping > 0.0 ? panRecognizer.velocity(in: targetView).y / damping : 0.0
 		let horizontalTouchLocation = panRecognizer.location(in: targetView).x
-		maskingPath.addQuadCurve(to: CGPoint(x: targetView.bounds.maxX, y: 0.0), controlPoint: CGPoint(x: horizontalTouchLocation, y: verticalOffset))
+        
+        let topRight = CGPoint(x: targetView.bounds.maxX, y: 0.0)
+        if direction == .up {
+            maskingPath.addLine(to: topRight)
+        } else {
+            maskingPath.addQuadCurve(to: topRight, controlPoint: CGPoint(x: horizontalTouchLocation, y: verticalOffset))
+        }
 		
 		// ...to bottom-right corner...
 		maskingPath.addLine(to: CGPoint(x: targetView.bounds.maxX, y: targetView.bounds.maxY))
 		
 		// ...to bottom-left corner...
-		maskingPath.addLine(to: CGPoint(x: 0.0, y: targetView.bounds.maxY))
+        let bottomLeft = CGPoint(x: 0.0, y: targetView.bounds.maxY)
+        if direction == .up {
+            maskingPath.addQuadCurve(to: bottomLeft, controlPoint: CGPoint(x: horizontalTouchLocation, y: targetView.bounds.maxY + verticalOffset))
+        } else {
+            maskingPath.addLine(to: bottomLeft)
+        }
 		
 		// ...and close the path.
 		maskingPath.close()
@@ -189,14 +202,26 @@ class TransitionCoordinator: NSObject {
 		let velocity = panRecognizer.velocity(in: targetView)
 		let translation = panRecognizer.translation(in: targetView)
 		
-		let isMovingDownwards = velocity.y > 0.0
-		let hasPassedThreshold = translation.y > targetView.bounds.midY
+        let isMovingToCompletion: Bool
+        switch direction {
+        case .up:
+            isMovingToCompletion = velocity.y < 0.0
+        default:
+            isMovingToCompletion = velocity.y > 0.0
+        }
+        let hasPassedThreshold: Bool
+        switch direction {
+        case .up:
+            hasPassedThreshold = translation.y < -targetView.bounds.midY
+        default:
+            hasPassedThreshold = translation.y > targetView.bounds.midY
+        }
 		
 		// We support both completing the transition and cancelling the transition.
 		// The transition to the new style should be completed if the user is panning
-		// downwards or if they've panned enough that more than half of the new view
-		// is already shown.
-		let shouldCompleteTransition = isMovingDownwards || hasPassedThreshold
+		// towards completion or if they've panned enough that more than half of the 
+        // new view is already shown.
+		let shouldCompleteTransition = isMovingToCompletion || hasPassedThreshold
 		
 		if shouldCompleteTransition {
 			completeInteractiveStyleTransition(withVelocity: velocity)
@@ -241,8 +266,14 @@ class TransitionCoordinator: NSObject {
 		// the targetView and then remove the snapshot. The further down the mask layer is,
 		// the more of the underlying view is visible. When the mask layer reaches the
 		// bottom of the targetView, the entire underlying view will be visible so removing
-		// the snapshot will have no visual effect.
-		let targetLocation = CGPoint(x: 0.0, y: targetView.bounds.maxY)
+		// the snapshot will have no visual effect. When panning up, the effect is reversed.
+        let targetLocation: CGPoint
+        switch direction {
+        case .up:
+            targetLocation = CGPoint(x: 0.0, y: -targetView.bounds.maxY)
+        default:
+            targetLocation = CGPoint(x: 0.0, y: targetView.bounds.maxY)
+        }
 		animate(snapshotMaskLayer, to: targetLocation, withVelocity: velocity) {
 			self.cleanupAfterInteractiveStyleTransition()
 			self.state = .idle
@@ -258,12 +289,7 @@ class TransitionCoordinator: NSObject {
 }
 
 extension TransitionCoordinator: UIGestureRecognizerDelegate {
-	private typealias Degrees = Double
-
-	private enum Direction {
-		case up, down, left, right
-	}
-	
+    
 	func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
 		guard let panRecognizer = gestureRecognizer as? PessimisticPanGestureRecognizer else {
 			return true
@@ -272,24 +298,39 @@ extension TransitionCoordinator: UIGestureRecognizerDelegate {
 		guard state == .idle else {
 			return false
 		}
-		
-		let translation = panRecognizer.translation(in: targetView)
-		let panningAngle: Degrees = atan2(Double(translation.y), Double(translation.x)) * 360 / (Double.pi * 2)
-		let panningDirection = direction(for: panningAngle)
-		return panningDirection == .down
+        
+        return panRecognizer.direction == .down || panRecognizer.direction == .up
 	}
 
 	func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
 		// This prevents other pan gesture recognizerns (such as the one in scroll views) from interfering with the Gagat gesture.
 		return otherGestureRecognizer is UIPanGestureRecognizer
 	}
-	
-	private func direction(for angle: Degrees) -> Direction {
-		switch angle {
-		case 45.0...135.0: return .down
-		case 135.0...225.0: return .left
-		case 225.0...315.0: return .up
-		default: return .right
-		}
-	}
+    
+}
+
+extension UIPanGestureRecognizer {
+    
+    private typealias Degrees = Double
+
+    enum Direction {
+        case up, down, left, right
+    }
+    
+    var direction: Direction {
+        let translation = self.translation(in: view)
+        let panningAngle: Degrees = atan2(Double(translation.y), Double(translation.x)) * 360 / (Double.pi * 2)
+        let adjustedPanningAngle = panningAngle >= 0 ? panningAngle : 360 + panningAngle
+        return direction(for: adjustedPanningAngle)
+    }
+    
+    private func direction(for angle: Degrees) -> Direction {
+        switch angle {
+        case 45.0...135.0: return .down
+        case 135.0...225.0: return .left
+        case 225.0...315.0: return .up
+        default: return .right
+        }
+    }
+
 }
